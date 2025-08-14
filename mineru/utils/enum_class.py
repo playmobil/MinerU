@@ -59,6 +59,7 @@ class ModelPath:
     pytorch_paddle = "models/OCR/paddleocr_torch"
     layout_reader = "models/ReadingOrder/layout_reader"
     slanet_plus = "models/TabRec/SlanetPlus/slanet-plus.onnx"
+    unitable = "unitable"  # Unitable model - auto-downloaded by RapidTable
 
 
 class SplitFlag:

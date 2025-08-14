@@ -13,7 +13,15 @@ from ...utils.enum_class import ModelPath
 from ...utils.models_download_utils import auto_download_and_get_model_root_path
 
 
-def table_model_init(lang=None):
+def table_model_init(lang=None, table_model_type='unitable', device='mps'):
+    """
+    Initialize table model with configurable model type.
+    
+    Args:
+        lang: Language for OCR
+        table_model_type: 'unitable', 'slanet_plus', 'ppstructure_en', 'ppstructure_zh'
+        device: 'mps', 'cuda', 'cpu' (for unitable model)
+    """
     atom_model_manager = AtomModelSingleton()
     ocr_engine = atom_model_manager.get_atom_model(
         atom_model_name='ocr',
@@ -21,7 +29,7 @@ def table_model_init(lang=None):
         det_db_unclip_ratio=1.6,
         lang=lang
     )
-    table_model = RapidTableModel(ocr_engine)
+    table_model = RapidTableModel(ocr_engine, model_type=table_model_type, device=device)
     return table_model
 
 
@@ -114,6 +122,8 @@ def atom_model_init(model_name: str, **kwargs):
     elif model_name == AtomicModel.Table:
         atom_model = table_model_init(
             kwargs.get('lang'),
+            kwargs.get('table_model_type', 'unitable'),
+            kwargs.get('device', 'mps')
         )
     else:
         logger.error('model name not allow')

@@ -15,11 +15,26 @@ def escape_html(input_string):
 
 
 class RapidTableModel(object):
-    def __init__(self, ocr_engine):
-        slanet_plus_model_path = os.path.join(auto_download_and_get_model_root_path(ModelPath.slanet_plus), ModelPath.slanet_plus)
-        input_args = RapidTableInput(model_type='slanet_plus', model_path=slanet_plus_model_path)
+    def __init__(self, ocr_engine, model_type='unitable', device='mps'):
+        """
+        Initialize RapidTableModel with configurable model type.
+        
+        Args:
+            ocr_engine: OCR engine instance
+            model_type: 'unitable', 'slanet_plus', 'ppstructure_en', 'ppstructure_zh'
+            device: 'mps', 'cuda', 'cpu' (for unitable)
+        """
+        if model_type == 'unitable':
+            # Unitable model - highest accuracy, PyTorch-based
+            input_args = RapidTableInput(model_type='unitable', device=device)
+        else:
+            # Legacy SLANet+ model - ONNX-based
+            slanet_plus_model_path = os.path.join(auto_download_and_get_model_root_path(ModelPath.slanet_plus), ModelPath.slanet_plus)
+            input_args = RapidTableInput(model_type=model_type, model_path=slanet_plus_model_path)
+        
         self.table_model = RapidTable(input_args)
         self.ocr_engine = ocr_engine
+        self.model_type = model_type
 
 
     def predict(self, image):
