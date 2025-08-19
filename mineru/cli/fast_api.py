@@ -4,9 +4,9 @@ import uvicorn
 import click
 from pathlib import Path
 from glob import glob
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from typing import List, Optional
 from loguru import logger
 from base64 import b64encode
@@ -31,6 +31,404 @@ def get_infer_result(file_suffix_identifier: str, pdf_name: str, parse_dir: str)
         with open(result_file_path, "r", encoding="utf-8") as fp:
             return fp.read()
     return None
+
+
+@app.get("/", response_class=HTMLResponse)
+async def upload_form():
+    """返回文件上传的HTML页面"""
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>MinerU 文件解析服务</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }
+            .container {
+                background: white;
+                border-radius: 15px;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+                padding: 40px;
+                max-width: 800px;
+                width: 100%;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .header h1 {
+                color: #333;
+                font-size: 2.5em;
+                margin-bottom: 10px;
+            }
+            .header p {
+                color: #666;
+                font-size: 1.1em;
+            }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            .form-group label {
+                display: block;
+                margin-bottom: 8px;
+                font-weight: 600;
+                color: #333;
+            }
+            .form-group input,
+            .form-group select {
+                width: 100%;
+                padding: 12px;
+                border: 2px solid #e1e5e9;
+                border-radius: 8px;
+                font-size: 16px;
+                transition: border-color 0.3s ease;
+            }
+            .form-group input:focus,
+            .form-group select:focus {
+                outline: none;
+                border-color: #667eea;
+            }
+            .file-upload {
+                border: 2px dashed #e1e5e9;
+                border-radius: 8px;
+                padding: 40px;
+                text-align: center;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+            .file-upload:hover {
+                border-color: #667eea;
+                background-color: #f8f9ff;
+            }
+            .file-upload.dragover {
+                border-color: #667eea;
+                background-color: #f0f2ff;
+            }
+            .file-upload-text {
+                color: #666;
+                font-size: 16px;
+                margin-bottom: 10px;
+            }
+            .file-upload-hint {
+                color: #999;
+                font-size: 14px;
+            }
+            .checkbox-group {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-top: 10px;
+            }
+            .checkbox-item {
+                display: flex;
+                align-items: center;
+            }
+            .checkbox-item input {
+                margin-right: 8px;
+                width: auto;
+            }
+            .submit-btn {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 15px 30px;
+                border: none;
+                border-radius: 8px;
+                font-size: 18px;
+                font-weight: 600;
+                cursor: pointer;
+                width: 100%;
+                transition: transform 0.3s ease;
+            }
+            .submit-btn:hover {
+                transform: translateY(-2px);
+            }
+            .submit-btn:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                transform: none;
+            }
+            .loading {
+                display: none;
+                text-align: center;
+                margin-top: 20px;
+            }
+            .spinner {
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 10px;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .result {
+                margin-top: 30px;
+                padding: 20px;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                border-left: 4px solid #667eea;
+                display: none;
+            }
+            .result pre {
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                background: #fff;
+                padding: 15px;
+                border-radius: 5px;
+                max-height: 400px;
+                overflow-y: auto;
+            }
+            .selected-files {
+                margin-top: 10px;
+                padding: 10px;
+                background-color: #f8f9fa;
+                border-radius: 5px;
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>MinerU 文件解析</h1>
+                <p>上传PDF或图片文件进行智能解析</p>
+            </div>
+            
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>选择文件 (支持PDF、图片格式):</label>
+                    <div class="file-upload" id="fileUpload">
+                        <div class="file-upload-text">点击选择文件或拖拽文件到此处</div>
+                        <div class="file-upload-hint">支持 PDF, JPG, PNG, JPEG 格式</div>
+                        <input type="file" id="files" name="files" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none;">
+                    </div>
+                    <div class="selected-files" id="selectedFiles"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="outputDir">输出目录:</label>
+                    <input type="text" id="outputDir" name="output_dir" value="./output" placeholder="输出目录路径">
+                </div>
+
+                <div class="form-group">
+                    <label for="backend">后端模式:</label>
+                    <select id="backend" name="backend">
+                        <option value="pipeline">Pipeline</option>
+                        <option value="vlm">VLM</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="parseMethod">解析方法:</label>
+                    <select id="parseMethod" name="parse_method">
+                        <option value="auto">自动</option>
+                        <option value="ocr">OCR</option>
+                        <option value="txt">文本</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="langList">语言:</label>
+                    <select id="langList" name="lang_list">
+                        <option value="ch">中文</option>
+                        <option value="en">英文</option>
+                        <option value="ja">日文</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>输出选项:</label>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnMd" name="return_md" checked>
+                            <label for="returnMd">返回Markdown</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnMiddleJson" name="return_middle_json">
+                            <label for="returnMiddleJson">返回中间JSON</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnModelOutput" name="return_model_output">
+                            <label for="returnModelOutput">返回模型输出</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnContentList" name="return_content_list">
+                            <label for="returnContentList">返回内容列表</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnImages" name="return_images">
+                            <label for="returnImages">返回图片</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="formulaEnable" name="formula_enable" checked>
+                            <label for="formulaEnable">启用公式识别</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="tableEnable" name="table_enable" checked>
+                            <label for="tableEnable">启用表格识别</label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submitBtn">开始解析</button>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>正在处理文件，请稍候...</p>
+            </div>
+
+            <div class="result" id="result">
+                <h3>解析结果:</h3>
+                <pre id="resultContent"></pre>
+            </div>
+        </div>
+
+        <script>
+            const fileUpload = document.getElementById('fileUpload');
+            const fileInput = document.getElementById('files');
+            const selectedFiles = document.getElementById('selectedFiles');
+            const form = document.getElementById('uploadForm');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            const submitBtn = document.getElementById('submitBtn');
+
+            // 文件上传区域点击事件
+            fileUpload.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            // 拖拽事件
+            fileUpload.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                fileUpload.classList.add('dragover');
+            });
+
+            fileUpload.addEventListener('dragleave', () => {
+                fileUpload.classList.remove('dragover');
+            });
+
+            fileUpload.addEventListener('drop', (e) => {
+                e.preventDefault();
+                fileUpload.classList.remove('dragover');
+                fileInput.files = e.dataTransfer.files;
+                displaySelectedFiles();
+            });
+
+            // 文件选择事件
+            fileInput.addEventListener('change', displaySelectedFiles);
+
+            function displaySelectedFiles() {
+                const files = fileInput.files;
+                if (files.length > 0) {
+                    let fileList = '<strong>已选择文件:</strong><br>';
+                    for (let i = 0; i < files.length; i++) {
+                        fileList += `${i + 1}. ${files[i].name} (${(files[i].size / 1024 / 1024).toFixed(2)} MB)<br>`;
+                    }
+                    selectedFiles.innerHTML = fileList;
+                    selectedFiles.style.display = 'block';
+                } else {
+                    selectedFiles.style.display = 'none';
+                }
+            }
+
+            // 表单提交事件
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                console.log('Form submission started');
+                
+                if (fileInput.files.length === 0) {
+                    alert('请选择要解析的文件！');
+                    return;
+                }
+
+                console.log('Files selected:', fileInput.files.length);
+                const formData = new FormData();
+                
+                // 添加文件
+                for (let file of fileInput.files) {
+                    formData.append('files', file);
+                }
+                
+                // 添加其他参数
+                formData.append('output_dir', document.getElementById('outputDir').value);
+                formData.append('backend', document.getElementById('backend').value);
+                formData.append('parse_method', document.getElementById('parseMethod').value);
+                formData.append('lang_list', document.getElementById('langList').value);
+                
+                // 添加布尔参数
+                formData.append('return_md', document.getElementById('returnMd').checked);
+                formData.append('return_middle_json', document.getElementById('returnMiddleJson').checked);
+                formData.append('return_model_output', document.getElementById('returnModelOutput').checked);
+                formData.append('return_content_list', document.getElementById('returnContentList').checked);
+                formData.append('return_images', document.getElementById('returnImages').checked);
+                formData.append('formula_enable', document.getElementById('formulaEnable').checked);
+                formData.append('table_enable', document.getElementById('tableEnable').checked);
+
+                console.log('FormData prepared, sending request...');
+                
+                // 显示加载状态
+                loading.style.display = 'block';
+                result.style.display = 'none';
+                submitBtn.disabled = true;
+
+                try {
+                    console.log('Sending POST request to /file_parse');
+                    const response = await fetch('/file_parse', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    console.log('Response received:', response.status);
+                    const data = await response.json();
+                    console.log('Response data:', data);
+
+                    if (response.ok) {
+                        resultContent.textContent = JSON.stringify(data, null, 2);
+                        result.style.display = 'block';
+                    } else {
+                        resultContent.textContent = '错误: ' + (data.error || '解析失败');
+                        result.style.display = 'block';
+                    }
+                } catch (error) {
+                    console.error('Request failed:', error);
+                    resultContent.textContent = '网络错误: ' + error.message;
+                    result.style.display = 'block';
+                } finally {
+                    loading.style.display = 'none';
+                    submitBtn.disabled = false;
+                    console.log('Request completed');
+                }
+            });
+            
+            // 添加点击事件监听器到按钮，用于调试
+            submitBtn.addEventListener('click', function(e) {
+                console.log('Submit button clicked');
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return html_content
 
 
 @app.post(path="/file_parse",)
