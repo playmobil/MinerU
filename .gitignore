@@ -29,6 +29,8 @@ app/tests/*
 temp/
 tmp/
 tmp
+.claude
+.claude/
 .vscode
 .vscode/
 ocr_demo
