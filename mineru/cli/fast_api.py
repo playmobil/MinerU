@@ -2,11 +2,14 @@ import uuid
 import os
 import uvicorn
 import click
+import zipfile
 from pathlib import Path
 from glob import glob
+from io import BytesIO
+from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from typing import List, Optional
 from loguru import logger
 from base64 import b64encode
@@ -31,6 +34,87 @@ def get_infer_result(file_suffix_identifier: str, pdf_name: str, parse_dir: str)
         with open(result_file_path, "r", encoding="utf-8") as fp:
             return fp.read()
     return None
+
+
+def create_zip_archive(result_dict: dict, pdf_file_names: list, parse_dirs: dict, return_options: dict) -> BytesIO:
+    """
+    根据勾选的输出选项创建ZIP压缩包
+    
+    Args:
+        result_dict: 解析结果字典
+        pdf_file_names: PDF文件名列表
+        parse_dirs: 解析目录字典
+        return_options: 返回选项字典
+    
+    Returns:
+        BytesIO: ZIP文件的字节流
+    """
+    zip_buffer = BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_file:
+        for pdf_name in pdf_file_names:
+            parse_dir = parse_dirs.get(pdf_name)
+            if not parse_dir or not os.path.exists(parse_dir):
+                continue
+            
+            # 为每个文件创建一个文件夹，使用安全的文件名
+            safe_name = "".join(c for c in pdf_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            folder_name = f"{safe_name}/"
+            
+            # 添加Markdown文件
+            if return_options.get('return_md', False):
+                md_content = get_infer_result(".md", pdf_name, parse_dir)
+                if md_content:
+                    zip_file.writestr(
+                        f"{folder_name}{safe_name}.md", 
+                        md_content.encode('utf-8'),
+                        compress_type=zipfile.ZIP_DEFLATED
+                    )
+            
+            # 添加中间JSON文件
+            if return_options.get('return_middle_json', False):
+                middle_json = get_infer_result("_middle.json", pdf_name, parse_dir)
+                if middle_json:
+                    zip_file.writestr(
+                        f"{folder_name}{safe_name}_middle.json", 
+                        middle_json.encode('utf-8'),
+                        compress_type=zipfile.ZIP_DEFLATED
+                    )
+            
+            # 添加模型输出文件
+            if return_options.get('return_model_output', False):
+                model_output = get_infer_result("_model.json", pdf_name, parse_dir)
+                if not model_output:
+                    model_output = get_infer_result("_model_output.txt", pdf_name, parse_dir)
+                if model_output:
+                    ext = ".json" if "_model.json" in parse_dir else ".txt"
+                    zip_file.writestr(
+                        f"{folder_name}{safe_name}_model_output{ext}", 
+                        model_output.encode('utf-8'),
+                        compress_type=zipfile.ZIP_DEFLATED
+                    )
+            
+            # 添加内容列表文件
+            if return_options.get('return_content_list', False):
+                content_list = get_infer_result("_content_list.json", pdf_name, parse_dir)
+                if content_list:
+                    zip_file.writestr(
+                        f"{folder_name}{safe_name}_content_list.json", 
+                        content_list.encode('utf-8'),
+                        compress_type=zipfile.ZIP_DEFLATED
+                    )
+            
+            # 添加图片文件
+            if return_options.get('return_images', False):
+                images_dir = os.path.join(parse_dir, "images")
+                if os.path.exists(images_dir):
+                    image_paths = glob(f"{images_dir}/*.jpg") + glob(f"{images_dir}/*.png")
+                    for image_path in image_paths:
+                        image_name = os.path.basename(image_path)
+                        zip_file.write(image_path, f"{folder_name}images/{image_name}")
+    
+    zip_buffer.seek(0)
+    return zip_buffer
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -285,6 +369,10 @@ async def upload_form():
                             <input type="checkbox" id="tableEnable" name="table_enable" checked>
                             <label for="tableEnable">启用表格识别</label>
                         </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="returnZip" name="return_zip">
+                            <label for="returnZip">下载ZIP压缩包</label>
+                        </div>
                     </div>
                 </div>
 
@@ -383,6 +471,7 @@ async def upload_form():
                 formData.append('return_images', document.getElementById('returnImages').checked);
                 formData.append('formula_enable', document.getElementById('formulaEnable').checked);
                 formData.append('table_enable', document.getElementById('tableEnable').checked);
+                formData.append('return_zip', document.getElementById('returnZip').checked);
 
                 console.log('FormData prepared, sending request...');
                 
@@ -399,13 +488,47 @@ async def upload_form():
                     });
 
                     console.log('Response received:', response.status);
-                    const data = await response.json();
-                    console.log('Response data:', data);
-
+                    
                     if (response.ok) {
-                        resultContent.textContent = JSON.stringify(data, null, 2);
-                        result.style.display = 'block';
+                        const contentType = response.headers.get('Content-Type');
+                        
+                        // 检查是否返回ZIP文件
+                        if (contentType && contentType.includes('application/zip')) {
+                            // 处理ZIP文件下载
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            
+                            // 从Content-Disposition头中获取文件名
+                            const disposition = response.headers.get('Content-Disposition');
+                            let filename = 'parsed_files.zip';
+                            if (disposition && disposition.includes('filename=')) {
+                                const matches = disposition.match(/filename=([^;]+)/);
+                                if (matches && matches[1]) {
+                                    filename = matches[1];
+                                }
+                            }
+                            
+                            // 创建下载链接并触发下载
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            window.URL.revokeObjectURL(url);
+                            
+                            resultContent.textContent = `ZIP文件已下载: ${filename}`;
+                            result.style.display = 'block';
+                        } else {
+                            // 处理JSON响应
+                            const data = await response.json();
+                            console.log('Response data:', data);
+                            
+                            resultContent.textContent = JSON.stringify(data, null, 2);
+                            result.style.display = 'block';
+                        }
                     } else {
+                        const data = await response.json();
                         resultContent.textContent = '错误: ' + (data.error || '解析失败');
                         result.style.display = 'block';
                     }
@@ -446,6 +569,7 @@ async def parse_pdf(
         return_model_output: bool = Form(False),
         return_content_list: bool = Form(False),
         return_images: bool = Form(False),
+        return_zip: bool = Form(False),
         start_page_id: int = Form(0),
         end_page_id: int = Form(99999),
 ):
@@ -519,8 +643,10 @@ async def parse_pdf(
             **config
         )
 
-        # 构建结果路径
+        # 构建结果路径和解析目录字典
         result_dict = {}
+        parse_dirs = {}
+        
         for pdf_name in pdf_file_names:
             result_dict[pdf_name] = {}
             data = result_dict[pdf_name]
@@ -529,6 +655,8 @@ async def parse_pdf(
                 parse_dir = os.path.join(unique_dir, pdf_name, parse_method)
             else:
                 parse_dir = os.path.join(unique_dir, pdf_name, "vlm")
+            
+            parse_dirs[pdf_name] = parse_dir
 
             if os.path.exists(parse_dir):
                 if return_md:
@@ -550,14 +678,46 @@ async def parse_pdf(
                         ): f"data:image/jpeg;base64,{encode_image(image_path)}"
                         for image_path in image_paths
                     }
-        return JSONResponse(
-            status_code=200,
-            content={
-                "backend": backend,
-                "version": __version__,
-                "results": result_dict
+        
+        # 如果用户勾选了下载ZIP压缩包
+        if return_zip:
+            return_options = {
+                'return_md': return_md,
+                'return_middle_json': return_middle_json,
+                'return_model_output': return_model_output,
+                'return_content_list': return_content_list,
+                'return_images': return_images
             }
-        )
+            
+            zip_buffer = create_zip_archive(result_dict, pdf_file_names, parse_dirs, return_options)
+            
+            # 生成ZIP文件名，处理中文字符
+            if len(pdf_file_names) == 1:
+                safe_filename = "".join(c for c in pdf_file_names[0] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                zip_filename = f"{safe_filename}_parsed.zip"
+            else:
+                zip_filename = "parsed_files.zip"
+            
+            # 对文件名进行URL编码以支持中文
+            encoded_filename = quote(zip_filename, safe='')
+            
+            return StreamingResponse(
+                BytesIO(zip_buffer.read()),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+                    "Content-Type": "application/zip; charset=utf-8"
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "backend": backend,
+                    "version": __version__,
+                    "results": result_dict
+                }
+            )
     except Exception as e:
         logger.exception(e)
         return JSONResponse(

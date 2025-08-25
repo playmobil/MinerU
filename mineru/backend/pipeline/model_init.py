@@ -8,28 +8,32 @@ from ...model.layout.doclayout_yolo import DocLayoutYOLOModel
 from ...model.mfd.yolo_v8 import YOLOv8MFDModel
 from ...model.mfr.unimernet.Unimernet import UnimernetModel
 from ...model.ocr.paddleocr2pytorch.pytorch_paddle import PytorchPaddleOCR
-from ...model.table.rapid_table import RapidTableModel
+from ...model.table.rapid_table import RapidTableModel, get_device
 from ...utils.enum_class import ModelPath
 from ...utils.models_download_utils import auto_download_and_get_model_root_path
 
 
-def table_model_init(lang=None, table_model_type='unitable', device='mps'):
+def table_model_init(lang=None, table_model_type='unitable', device=None):
     """
-    Initialize table model with configurable model type.
+    Initialize table model with configurable model type and optimized caching.
     
     Args:
         lang: Language for OCR
         table_model_type: 'unitable', 'slanet_plus', 'ppstructure_en', 'ppstructure_zh'
-        device: 'mps', 'cuda', 'cpu' (for unitable model)
+        device: 'mps', 'cuda', 'cpu' (for unitable model). If None, auto-detect best device.
     """
     atom_model_manager = AtomModelSingleton()
+    
+    # 优化OCR引擎参数以提高表格处理性能
     ocr_engine = atom_model_manager.get_atom_model(
         atom_model_name='ocr',
-        det_db_box_thresh=0.5,
-        det_db_unclip_ratio=1.6,
+        det_db_box_thresh=0.4,  # 调整阈值以平衡精度和速度
+        det_db_unclip_ratio=1.5,  # 优化参数
         lang=lang
     )
+    
     table_model = RapidTableModel(ocr_engine, model_type=table_model_type, device=device)
+    logger.info(f"Table model initialized with type: {table_model_type}, device: {device or 'auto'}, lang: {lang}")
     return table_model
 
 
@@ -85,16 +89,22 @@ class AtomModelSingleton:
 
         lang = kwargs.get('lang', None)
         table_model_name = kwargs.get('table_model_name', None)
+        table_model_type = kwargs.get('table_model_type', 'unitable')
+        device = kwargs.get('device', None)
 
         if atom_model_name in [AtomicModel.OCR]:
             key = (atom_model_name, lang)
         elif atom_model_name in [AtomicModel.Table]:
-            key = (atom_model_name, table_model_name, lang)
+            # 优化表格模型缓存key，包含更多参数
+            key = (atom_model_name, table_model_type, lang, device)
         else:
             key = atom_model_name
 
         if key not in self._models:
             self._models[key] = atom_model_init(model_name=atom_model_name, **kwargs)
+            logger.debug(f"Created new model instance for key: {key}")
+        else:
+            logger.debug(f"Reusing cached model for key: {key}")
         return self._models[key]
 
 def atom_model_init(model_name: str, **kwargs):
@@ -123,8 +133,10 @@ def atom_model_init(model_name: str, **kwargs):
         atom_model = table_model_init(
             kwargs.get('lang'),
             kwargs.get('table_model_type', 'unitable'),
-            kwargs.get('device', 'mps')
+            kwargs.get('device', None)
         )
+        # 记录表格模型初始化信息
+        logger.debug(f"Table model initialized: type={kwargs.get('table_model_type', 'unitable')}, lang={kwargs.get('lang')}, device={kwargs.get('device')}")
     else:
         logger.error('model name not allow')
         exit(1)
@@ -138,9 +150,9 @@ def atom_model_init(model_name: str, **kwargs):
 
 class MineruPipelineModel:
     def __init__(self, **kwargs):
-        self.formula_config = kwargs.get('formula_config')
+        self.formula_config = kwargs.get('formula_config', {})
         self.apply_formula = self.formula_config.get('enable', True)
-        self.table_config = kwargs.get('table_config')
+        self.table_config = kwargs.get('table_config', {})
         self.apply_table = self.table_config.get('enable', True)
         self.lang = kwargs.get('lang', None)
         self.device = kwargs.get('device', 'cpu')
@@ -182,11 +194,15 @@ class MineruPipelineModel:
             det_db_box_thresh=0.3,
             lang=self.lang
         )
-        # init table model
+        # init table model with enhanced configuration
         if self.apply_table:
+            table_model_type = self.table_config.get('model_type', 'unitable')
             self.table_model = atom_model_manager.get_atom_model(
                 atom_model_name=AtomicModel.Table,
                 lang=self.lang,
+                table_model_type=table_model_type,
+                device=self.device,
             )
+            logger.info(f"Table processing enabled with model type: {table_model_type}")
 
         logger.info('DocAnalysis init done!')

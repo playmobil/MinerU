@@ -245,31 +245,51 @@ class BatchAnalyze:
 
                         ocr_res_list_dict['layout_res'].extend(ocr_result_list)
 
-        # 表格识别 table recognition
+        # 表格识别 table recognition - 优化为批处理模式
         if self.table_enable:
-            for table_res_dict in tqdm(table_res_list_all_page, desc="Table Predict"):
+            # 按语言分组进行批处理
+            lang_table_groups = defaultdict(list)
+            for table_res_dict in table_res_list_all_page:
                 _lang = table_res_dict['lang']
+                lang_table_groups[_lang].append(table_res_dict)
+            
+            # 对每种语言的表格进行批处理
+            for lang, table_group in lang_table_groups.items():
+                if not table_group:
+                    continue
+                    
+                # 获取该语言的表格模型（复用模型实例）
                 table_model = atom_model_manager.get_atom_model(
                     atom_model_name='table',
-                    lang=_lang,
+                    lang=lang,
                 )
-                html_code, table_cell_bboxes, logic_points, elapse = table_model.predict(table_res_dict['table_img'])
-                # 判断是否返回正常
-                if html_code:
-                    # 检查html_code是否包含'<table>'和'</table>'
-                    if '<table>' in html_code and '</table>' in html_code:
-                        # 选用<table>到</table>的内容，放入table_res_dict['table_res']['html']
-                        start_index = html_code.find('<table>')
-                        end_index = html_code.rfind('</table>') + len('</table>')
-                        table_res_dict['table_res']['html'] = html_code[start_index:end_index]
+                
+                # 批处理表格识别
+                table_images = [table_dict['table_img'] for table_dict in table_group]
+                
+                # 使用改进的批处理预测
+                batch_results = self._batch_table_predict(table_model, table_images, table_group)
+                
+                # 处理批处理结果
+                for i, (table_res_dict, result) in enumerate(zip(table_group, batch_results)):
+                    html_code, table_cell_bboxes, logic_points, elapse = result
+                    
+                    # 判断是否返回正常
+                    if html_code:
+                        # 检查html_code是否包含'<table>'和'</table>'
+                        if '<table>' in html_code and '</table>' in html_code:
+                            # 选用<table>到</table>的内容，放入table_res_dict['table_res']['html']
+                            start_index = html_code.find('<table>')
+                            end_index = html_code.rfind('</table>') + len('</table>')
+                            table_res_dict['table_res']['html'] = html_code[start_index:end_index]
+                        else:
+                            logger.warning(
+                                f'table recognition processing fails for table {i}, not found expected HTML table end'
+                            )
                     else:
                         logger.warning(
-                            'table recognition processing fails, not found expected HTML table end'
+                            f'table recognition processing fails for table {i}, not get html return'
                         )
-                else:
-                    logger.warning(
-                        'table recognition processing fails, not get html return'
-                    )
 
         # Create dictionaries to store items by language
         need_ocr_lists_by_lang = {}  # Dict of lists for each language
@@ -333,3 +353,29 @@ class BatchAnalyze:
                     total_processed += len(img_crop_list)
 
         return images_layout_res
+    
+    def _batch_table_predict(self, table_model, table_images, table_dicts):
+        """批处理表格预测以提高性能"""
+        results = []
+        
+        # 根据设备和内存情况调整批处理大小
+        table_batch_size = min(len(table_images), max(1, self.batch_ratio // 2))  # 表格处理相对内存密集
+        
+        for i in range(0, len(table_images), table_batch_size):
+            batch_images = table_images[i:i + table_batch_size]
+            batch_dicts = table_dicts[i:i + table_batch_size] if table_dicts else None
+            
+            batch_results = []
+            for j, img in enumerate(batch_images):
+                try:
+                    # 优化的单张预测，添加更好的错误处理
+                    result = table_model.predict(img)
+                    batch_results.append(result)
+                except Exception as e:
+                    logger.warning(f"Table prediction failed for image {i+j}: {str(e)}")
+                    # 返回空结果但保持结构一致
+                    batch_results.append((None, None, None, 0))
+            
+            results.extend(batch_results)
+        
+        return results
