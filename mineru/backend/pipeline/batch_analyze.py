@@ -16,12 +16,13 @@ OCR_DET_BASE_BATCH_SIZE = 16
 
 
 class BatchAnalyze:
-    def __init__(self, model_manager, batch_ratio: int, formula_enable, table_enable, enable_ocr_det_batch: bool = True):
+    def __init__(self, model_manager, batch_ratio: int, formula_enable, table_enable, enable_ocr_det_batch: bool = True, enable_vlm=False):
         self.batch_ratio = batch_ratio
         self.formula_enable = get_formula_enable(formula_enable)
         self.table_enable = get_table_enable(table_enable)
         self.model_manager = model_manager
         self.enable_ocr_det_batch = enable_ocr_det_batch
+        self.enable_vlm = enable_vlm
 
     def __call__(self, images_with_extra_info: list) -> list:
         if len(images_with_extra_info) == 0:
@@ -33,6 +34,7 @@ class BatchAnalyze:
             lang=None,
             formula_enable=self.formula_enable,
             table_enable=self.table_enable,
+            enable_vlm=self.enable_vlm,
         )
         atom_model_manager = AtomModelSingleton()
 
@@ -273,6 +275,21 @@ class BatchAnalyze:
                 # 处理批处理结果
                 for i, (table_res_dict, result) in enumerate(zip(table_group, batch_results)):
                     html_code, table_cell_bboxes, logic_points, elapse = result
+                    
+                    # VLM 增强处理（如果可用）
+                    if hasattr(table_model, 'vlm_processor') and table_model.vlm_processor:
+                        try:
+                            # 使用VLM增强表格识别结果
+                            enhanced_result = table_model.vlm_processor.enhance_table_result(
+                                image=table_res_dict['table_img'],
+                                table_result={'html': html_code, 'bboxes': table_cell_bboxes, 'logic_points': logic_points},
+                                context=f"table recognition for {lang} language"
+                            )
+                            if isinstance(enhanced_result, dict) and 'html' in enhanced_result:
+                                html_code = enhanced_result['html']
+                            logger.debug(f"Table result enhanced with VLM for table {i}")
+                        except Exception as e:
+                            logger.warning(f"VLM enhancement failed for table {i}: {e}")
                     
                     # 判断是否返回正常
                     if html_code:

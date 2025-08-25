@@ -172,6 +172,7 @@ def _process_pipeline(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        enable_vlm=False,
 ):
     """处理pipeline后端逻辑"""
     from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
@@ -180,7 +181,8 @@ def _process_pipeline(
     infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list = (
         pipeline_doc_analyze(
             pdf_bytes_list, p_lang_list, parse_method=parse_method,
-            formula_enable=p_formula_enable, table_enable=p_table_enable
+            formula_enable=p_formula_enable, table_enable=p_table_enable,
+            enable_vlm=enable_vlm
         )
     )
 
@@ -313,6 +315,7 @@ def do_parse(
         f_make_md_mode=MakeMode.MM_MD,
         start_page_id=0,
         end_page_id=None,
+        enable_vlm=False,
         **kwargs,
 ):
     # 预处理PDF字节数据
@@ -323,7 +326,8 @@ def do_parse(
             output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
             parse_method, formula_enable, table_enable,
             f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
-            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode
+            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+            enable_vlm
         )
     else:
         if backend.startswith("vlm-"):

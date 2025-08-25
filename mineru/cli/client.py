@@ -137,13 +137,21 @@ from .common import do_parse, read_fn, pdf_suffixes, image_suffixes
     """,
     default='huggingface',
 )
+@click.option(
+    '--vlm',
+    '--enable-vlm',
+    'enable_vlm',
+    is_flag=True,
+    help='Enable VLM (Vision Language Model) enhancement for table recognition. Requires transformers library. Adapted only for the case where the backend is set to "pipeline".',
+    default=False,
+)
 
 
 def main(
         ctx,
         input_path, output_dir, method, backend, lang, server_url,
         start_page_id, end_page_id, formula_enable, table_enable,
-        device_mode, virtual_vram, model_source, **kwargs
+        device_mode, virtual_vram, model_source, enable_vlm, **kwargs
 ):
 
     kwargs.update(arg_parse(ctx))
@@ -194,6 +202,7 @@ def main(
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                enable_vlm=enable_vlm,
                 **kwargs,
             )
         except Exception as e:
