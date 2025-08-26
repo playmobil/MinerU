@@ -27,6 +27,7 @@ except ImportError:
 def get_optimal_table_model_type(device=None, image_count=None, performance_priority='balanced'):
     """
     根据设备、图像数量和性能优先级自动选择最优的表格模型。
+    生产环境（A100）优化版本。
     
     Args:
         device: 设备类型 ('cuda', 'mps', 'cpu')
@@ -39,6 +40,16 @@ def get_optimal_table_model_type(device=None, image_count=None, performance_prio
     if device is None:
         device = get_device()
     
+    # 检测是否为A100等高端GPU
+    is_high_end_gpu = False
+    if device.startswith('cuda') and torch.cuda.is_available():
+        try:
+            gpu_name = torch.cuda.get_device_name(0).lower()
+            is_high_end_gpu = any(gpu in gpu_name for gpu in ['a100', 'a6000', 'v100', 'h100'])
+            vram = get_vram(device)
+        except:
+            vram = None
+    
     # 根据设备类型和性能优先级选择模型
     if device == 'cpu':
         # CPU环境优先选择轻量级模型
@@ -49,38 +60,66 @@ def get_optimal_table_model_type(device=None, image_count=None, performance_prio
         else:  # balanced
             return 'slanet_plus'  # CPU上最佳平衡
     
-    elif device in ['cuda', 'mps']:
+    elif device in ['cuda', 'mps'] or device.startswith('cuda'):
         # GPU环境可以使用更复杂的模型
-        if performance_priority == 'speed':
-            if image_count and image_count > 100:
-                return 'slanet_plus'  # 大批量处理优先速度
+        if is_high_end_gpu:
+            # A100等高端GPU，优先使用最高精度模型
+            if performance_priority == 'speed' and image_count and image_count > 200:
+                return 'slanet_plus'  # 超大批量处理时优先速度
             else:
-                return 'unitable'  # 中小批量优选精度
-        elif performance_priority == 'accuracy':
-            # 检查GPU内存
-            try:
-                vram = get_vram(device)
-                if vram and vram >= 8:  # 8GB+显存支持UniTable
-                    return 'unitable'
+                return 'unitable'  # A100上默认使用最高精度
+        else:
+            # 其他GPU
+            if performance_priority == 'speed':
+                if image_count and image_count > 100:
+                    return 'slanet_plus'  # 大批量处理优先速度
                 else:
-                    return 'slanet_plus'
-            except:
-                return 'unitable'  # 默认尝试高精度模型
-        else:  # balanced
-            return 'unitable'  # GPU环境下默认选择
+                    return 'unitable'  # 中小批量优选精度
+            elif performance_priority == 'accuracy':
+                # 检查GPU内存
+                try:
+                    if vram and vram >= 8:  # 8GB+显存支持UniTable
+                        return 'unitable'
+                    else:
+                        return 'slanet_plus'
+                except:
+                    return 'unitable'  # 默认尝试高精度模型
+            else:  # balanced
+                return 'unitable'  # GPU环境下默认选择
     
     # 默认回退
     return 'slanet_plus'
 
 
 class TableVLMProcessor:
-    """VLM-based table enhancement processor"""
+    """VLM-based table enhancement processor - Production optimized for A100"""
     
     def __init__(self, model_name='microsoft/table-transformer-structure-recognition', device=None):
         self.model_name = model_name
         self.device = device or get_device()
         self._processor = None
         self._model = None
+        self._is_production = self._detect_production_env()
+    
+    def _detect_production_env(self):
+        """检测是否为生产环境（Ubuntu A100）"""
+        import platform
+        import os
+        
+        # 检测Ubuntu + CUDA环境
+        is_ubuntu = platform.system() == 'Linux' and 'ubuntu' in platform.version().lower()
+        has_cuda = torch.cuda.is_available() and torch.cuda.get_device_count() > 0
+        
+        # 检测A100或其他高端GPU
+        is_high_end_gpu = False
+        if has_cuda:
+            try:
+                gpu_name = torch.cuda.get_device_name(0).lower()
+                is_high_end_gpu = any(gpu in gpu_name for gpu in ['a100', 'a6000', 'v100', 'h100'])
+            except:
+                pass
+        
+        return is_ubuntu and has_cuda and is_high_end_gpu
         
     def _lazy_init(self):
         """Lazy initialization to avoid loading models unless needed"""
@@ -90,31 +129,52 @@ class TableVLMProcessor:
             
         if self._processor is None:
             try:
-                logger.info(f"Loading VLM model: {self.model_name}")
+                logger.info(f"Loading VLM model: {self.model_name} (Production: {self._is_production})")
+                
+                # 生产环境优化设置
+                model_kwargs = {}
+                if self._is_production:
+                    # A100优化设置
+                    model_kwargs = {
+                        'torch_dtype': torch.float16,  # 使用fp16提高性能
+                        'device_map': 'auto',
+                        'low_cpu_mem_usage': True,
+                        'use_flash_attention_2': True,  # A100支持Flash Attention 2
+                    }
+                elif self.device != 'cpu':
+                    # 非生产GPU环境
+                    model_kwargs = {
+                        'torch_dtype': torch.float16,
+                        'device_map': 'auto',
+                    }
                 
                 # Use appropriate model loading based on model type
                 if 'table-transformer' in self.model_name.lower():
                     # Table Transformer uses a different architecture
                     from transformers import AutoImageProcessor, AutoModelForObjectDetection
                     self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-                    self._model = AutoModelForObjectDetection.from_pretrained(self.model_name)
+                    self._model = AutoModelForObjectDetection.from_pretrained(self.model_name, **model_kwargs)
                 else:
                     # For other VLM models, try the general approach
                     self._processor = AutoProcessor.from_pretrained(self.model_name)
                     # Try different model classes
                     try:
                         from transformers import AutoModelForVision2Seq
-                        self._model = AutoModelForVision2Seq.from_pretrained(
-                            self.model_name,
-                            torch_dtype=torch.float16 if self.device != 'cpu' else torch.float32,
-                            device_map='auto' if self.device != 'cpu' else None
-                        )
+                        self._model = AutoModelForVision2Seq.from_pretrained(self.model_name, **model_kwargs)
                     except:
                         # Fallback to standard model loading
-                        self._processor = AutoProcessor.from_pretrained(self.model_name)
-                        self._model = None  # Will work without model for basic enhancement
+                        try:
+                            from transformers import AutoModelForCausalLM
+                            self._model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+                        except:
+                            logger.warning("Could not load specific model architecture, using processor only")
+                            self._model = None  # Will work without model for basic enhancement
                 
-                logger.info("VLM model loaded successfully")
+                # 将模型移动到正确的设备
+                if self._model and hasattr(self._model, 'to'):
+                    self._model = self._model.to(self.device)
+                
+                logger.info(f"VLM model loaded successfully on {self.device}")
                 return True
             except Exception as e:
                 logger.error(f"Failed to load VLM model: {e}")

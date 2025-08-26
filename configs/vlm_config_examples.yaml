@@ -1,0 +1,238 @@
+# MinerU VLM Configuration Examples
+# 各种环境和使用场景的配置示例
+
+# =============================================================================
+# 开发环境配置
+# =============================================================================
+development:
+  # Mac M1/M2 开发环境
+  mac_m1:
+    device: "mps"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 8
+    fp16: true
+    performance_priority: "balanced"
+    table_model_type: "auto"
+    
+  # Windows/Linux 开发环境 (中端GPU)
+  dev_gpu:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition" 
+    batch_size: 16
+    fp16: true
+    performance_priority: "balanced"
+    memory_optimization: true
+    
+  # CPU 开发环境
+  cpu_only:
+    device: "cpu"
+    vlm_enabled: false  # CPU模式不建议启用VLM
+    batch_size: 4
+    fp16: false
+    performance_priority: "speed"
+    table_model_type: "slanet_plus"
+
+# =============================================================================
+# 生产环境配置
+# =============================================================================
+production:
+  # A100 高性能服务器
+  a100_server:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 32
+    fp16: true
+    flash_attention: true
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    memory_optimization: false
+    concurrent_processing: true
+    min_batch_inference_size: 1024
+    
+  # V100 服务器
+  v100_server:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 24
+    fp16: true
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    memory_optimization: true
+    min_batch_inference_size: 512
+    
+  # 多GPU服务器配置
+  multi_gpu:
+    devices: ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 64  # 总批处理大小，会自动分配到各GPU
+    fp16: true
+    performance_priority: "speed"
+    load_balancing: true
+
+# =============================================================================
+# 特定使用场景配置
+# =============================================================================
+use_cases:
+  # 财务报表处理
+  financial_reports:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 16
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    language: "ch"
+    context_hints: ["financial", "accounting", "revenue", "balance sheet"]
+    
+  # 科研论文处理
+  academic_papers:
+    device: "cuda:0" 
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 12
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    language: "en"
+    formula_enable: true
+    context_hints: ["research", "data", "statistics", "experimental"]
+    
+  # 大批量文档处理
+  bulk_processing:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-detection"  # 更轻量的检测模型
+    batch_size: 48
+    performance_priority: "speed"
+    table_model_type: "slanet_plus"
+    memory_optimization: true
+    concurrent_processing: true
+    
+  # 高精度表格识别
+  precision_tables:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 8
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    fp16: false  # 使用fp32提高精度
+    complexity_threshold: 0.1  # 更多表格使用VLM
+
+# =============================================================================
+# 性能优化配置
+# =============================================================================
+optimization:
+  # 内存优化 (显存不足时)
+  memory_constrained:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-detection"
+    batch_size: 4
+    fp16: true
+    memory_optimization: true
+    low_cpu_mem_usage: true
+    gradient_checkpointing: true
+    
+  # 速度优化 (实时处理)
+  speed_optimized:
+    device: "cuda:0"
+    vlm_enabled: false  # 禁用VLM以提高速度
+    batch_size: 64
+    performance_priority: "speed"
+    table_model_type: "slanet_plus"
+    enable_tensorrt: true  # 如果支持TensorRT
+    
+  # 质量优化 (最高精度)
+  quality_optimized:
+    device: "cuda:0"
+    vlm_enabled: true
+    vlm_model: "microsoft/table-transformer-structure-recognition"
+    batch_size: 8
+    fp16: false
+    performance_priority: "accuracy"
+    table_model_type: "unitable"
+    multi_scale_inference: true
+
+# =============================================================================
+# 环境变量模板
+# =============================================================================
+environment_templates:
+  # A100 生产环境变量
+  a100_production_env: |
+    export MINERU_DEVICE_MODE=cuda:0
+    export MINERU_VLM_ENABLED=true
+    export MINERU_MIN_BATCH_INFERENCE_SIZE=1024
+    export MINERU_VIRTUAL_VRAM_SIZE=40
+    export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    export TORCH_CUDNN_V8_API_ENABLED=1
+    export CUDNN_BENCHMARK=1
+    export TRANSFORMERS_CACHE=/tmp/transformers_cache
+    export HF_HOME=/tmp/huggingface_cache
+    export MINERU_PERFORMANCE_PRIORITY=accuracy
+    export MINERU_TABLE_MODEL_TYPE=unitable
+    
+  # 开发环境变量
+  development_env: |
+    export MINERU_DEVICE_MODE=auto
+    export MINERU_VLM_ENABLED=true
+    export MINERU_MIN_BATCH_INFERENCE_SIZE=256
+    export MINERU_LOG_LEVEL=INFO
+    export MINERU_PERFORMANCE_PRIORITY=balanced
+    export TRANSFORMERS_CACHE=~/.cache/transformers
+    
+  # 内存受限环境
+  memory_limited_env: |
+    export MINERU_DEVICE_MODE=cuda:0
+    export MINERU_VLM_ENABLED=true
+    export MINERU_MIN_BATCH_INFERENCE_SIZE=128
+    export MINERU_VIRTUAL_VRAM_SIZE=8
+    export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+    export MINERU_MEMORY_OPTIMIZATION=true
+    export MINERU_LOW_CPU_MEM_USAGE=true
+
+# =============================================================================
+# 模型配置
+# =============================================================================
+models:
+  # VLM 模型选项
+  vlm_models:
+    table_transformer_structure:
+      name: "microsoft/table-transformer-structure-recognition"
+      description: "专业表格结构识别，适合复杂表格"
+      memory_usage: "中等"
+      accuracy: "高"
+      speed: "中等"
+      
+    table_transformer_detection:
+      name: "microsoft/table-transformer-detection" 
+      description: "表格检测模型，速度快"
+      memory_usage: "低"
+      accuracy: "中等"
+      speed: "高"
+      
+    # 可以添加其他VLM模型
+    # layoutlm_v3:
+    #   name: "microsoft/layoutlmv3-base"
+    #   description: "多模态文档理解"
+    #   memory_usage: "高"
+    #   accuracy: "很高"
+    #   speed: "慢"
+    
+  # Pipeline 表格模型
+  table_models:
+    unitable:
+      description: "最高精度表格识别"
+      accuracy: "99.18%"
+      speed: "中等"
+      memory_usage: "高"
+      
+    slanet_plus:
+      description: "平衡性能表格识别"
+      accuracy: "99.36%"  
+      speed: "快"
+      memory_usage: "中等"

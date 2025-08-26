@@ -260,10 +260,11 @@ class BatchAnalyze:
                 if not table_group:
                     continue
                     
-                # 获取该语言的表格模型（复用模型实例）
+                # 获取该语言的表格模型（复用模型实例，传递VLM设置）
                 table_model = atom_model_manager.get_atom_model(
                     atom_model_name='table',
                     lang=lang,
+                    enable_vlm=self.enable_vlm,
                 )
                 
                 # 批处理表格识别
